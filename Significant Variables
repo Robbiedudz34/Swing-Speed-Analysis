@@ -1,0 +1,108 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.optimize import curve_fit
+from sklearn.metrics import r2_score
+from scipy.stats import pearsonr
+
+# Define regression models
+def linear(x, m, b):
+    return m * x + b
+
+def quadratic(x, a, b, c):
+    return a * x**2 + b * x + c
+
+def exponential(x, a, b):
+    return a * np.exp(b * x)
+
+def logarithmic(x, a, b):
+    return a * np.log(x) + b
+
+# Function to compute best fit R^2 value
+def best_fit_r2(x_data, y_data):
+    models = {
+        'Linear': linear,
+        'Quadratic': quadratic,
+        'Exponential': exponential,
+        'Logarithmic': logarithmic
+    }
+
+    best_r2 = -np.inf
+    for name, func in models.items():
+        try:
+            if name == 'Logarithmic':
+                valid_idx = x_data > 0  # Logarithm requires positive x values
+                x_filtered, y_filtered = x_data[valid_idx], y_data[valid_idx]
+            else:
+                x_filtered, y_filtered = x_data, y_data
+
+            params, _ = curve_fit(func, x_filtered, y_filtered, maxfev=1000)
+            pred = func(x_filtered, *params)
+            r2 = r2_score(y_filtered, pred)
+
+            best_r2 = max(best_r2, r2)
+        except (RuntimeError, ValueError):
+            continue  
+
+    return best_r2 if best_r2 != -np.inf else np.nan
+
+# Load CSV file
+csv_path = input("Enter CSV file path (Press Enter for default): ").strip()
+csv_path = csv_path or os.path.join(os.path.dirname(__file__), "2024_ssa_stats.csv")
+
+try:
+    data = pd.read_csv(csv_path).iloc[:, 3:]  # Drop the first three columns
+    print("\nColumns available for analysis:\n", data.columns.tolist())
+except FileNotFoundError:
+    print(f"Error: File '{csv_path}' not found.")
+    exit()
+
+# Define key variables for comparison
+comparison_vars = {'avg_swing_speed': 'Bat Speed Avg', 'exit_velocity_avg': 'Avg EV'}
+valid_columns = [col for col in data.columns if col not in comparison_vars.keys()]
+
+# Compute R² values and correlation for valid pairs
+r2_matrix = pd.DataFrame(index=comparison_vars.values(), columns=valid_columns)
+top_pairs = []
+
+for key, label in comparison_vars.items():
+    for col in valid_columns:
+        if key != col:
+            x_data, y_data = data[key].dropna(), data[col].dropna()
+            common_idx = x_data.index.intersection(y_data.index)
+
+            if not common_idx.empty:
+                r2_value = best_fit_r2(x_data.loc[common_idx], y_data.loc[common_idx])
+                r2_matrix.loc[label, col] = r2_value
+
+                if r2_value >= 0.5:
+                    r_value, _ = pearsonr(x_data.loc[common_idx], y_data.loc[common_idx])
+                    top_pairs.append((label, col, r2_value, r_value))
+
+# Display top correlated pairs in a table
+if top_pairs:
+    top_pairs_sorted = sorted(top_pairs, key=lambda x: x[2], reverse=True)
+
+    fig, ax = plt.subplots(figsize=(10, max(1, len(top_pairs_sorted) * 0.5)))
+    ax.axis('off')
+
+    table_data = [['X Variable', 'Y Variable', 'R²', 'Correlation R']]
+    table_data += [[x, y, f"{r2:.4f}", f"{r:.4f}"] for x, y, r2, r in top_pairs_sorted]
+
+    table = ax.table(cellText=table_data, cellLoc='center', loc='center')
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.5)
+
+    plt.title('Top Pairings with R² ≥ 0.5')
+    plt.show()
+else:
+    print("\nNo significant correlations found (R² ≥ 0.5).")
+
+# Plot heatmap
+plt.figure(figsize=(12, 6))
+sns.heatmap(r2_matrix.astype(float), annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+plt.title('R² Heatmap for Key Comparisons')
+plt.show()
