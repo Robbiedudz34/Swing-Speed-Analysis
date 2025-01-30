@@ -1,0 +1,101 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+from scipy.stats import pearsonr, t
+from sklearn.metrics import mean_squared_error, r2_score
+
+# Function Definitions
+def linear(x, m, b):
+    return m * x + b
+
+def quadratic(x, a, b, c):
+    return a * x**2 + b * x + c
+
+def exponential(x, a, b):
+    return a * np.exp(b * x)
+
+def logarithmic(x, a, b):
+    return a * np.log(x) + b
+
+# Function to fit models and determine the best fit
+def fit_models(x_data, y_data):
+    models = {
+        'Linear': (linear, (lambda params: f'y = {params[0]:.2f}x + {params[1]:.2f}')),
+        'Quadratic': (quadratic, (lambda params: f'y = {params[0]:.2f}x² + {params[1]:.2f}x + {params[2]:.2f}')),
+        'Exponential': (exponential, (lambda params: f'y = {params[0]:.2f}e^({params[1]:.2f}x)')),
+        'Logarithmic': (logarithmic, (lambda params: f'y = {params[0]:.2f}log(x) + {params[1]:.2f}'))
+    }
+
+    best_model = None
+    best_fit_info = {'mse': np.inf}
+
+    for name, (func, equation_fmt) in models.items():
+        try:
+            if name == 'Logarithmic':
+                x_filtered = x_data[x_data > 0]  
+                y_filtered = y_data[x_data > 0]  
+                params, _ = curve_fit(func, x_filtered, y_filtered)
+                pred = func(x_filtered, *params)
+            else:
+                params, _ = curve_fit(func, x_data, y_data)
+                pred = func(x_data, *params)
+
+            mse = mean_squared_error(y_data[:len(pred)], pred)
+            r2 = r2_score(y_data[:len(pred)], pred)
+            equation = equation_fmt(params)
+
+            if mse < best_fit_info['mse']:
+                best_fit_info.update({'name': name, 'function': func, 'params': params, 'mse': mse, 'r2': r2, 'equation': equation})
+
+        except (RuntimeError, ValueError):
+            continue  
+
+    return best_fit_info
+
+# Function to plot scatterplot and best fit line
+def plot_best_fit(x_data, y_data, x_label, y_label, title):
+    best_fit_info = fit_models(x_data, y_data)
+    
+    if not best_fit_info.get('function'):
+        print("No suitable model found.")
+        return
+    
+    x_range = np.linspace(min(x_data), max(x_data), 500)
+    best_pred = best_fit_info['function'](x_range, *best_fit_info['params'])
+
+    plt.scatter(x_data, y_data, color='blue', alpha=0.6, label='Data')
+    plt.plot(x_range, best_pred, label=f"{best_fit_info['name']} Fit: {best_fit_info['equation']} (R² = {best_fit_info['r2']:.2f})", color='red')
+    plt.title(title)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.legend()
+    plt.show()
+
+# Main Execution: Load CSV and Get User Inputs
+csv_path = input("Enter CSV file path (Press Enter for default): ").strip()
+if not csv_path:
+    csv_path = os.path.join(os.path.dirname(__file__), "2024_ssa_stats.csv")
+
+try:
+    data = pd.read_csv(csv_path)
+    print("\nCSV Headers:\n", pd.DataFrame(data.columns, columns=['Header']).to_string(index=True))
+except FileNotFoundError:
+    print(f"Error: File '{csv_path}' not found.")
+    exit()
+
+try:
+    x_var_index = int(input("\nSelect column number for x-axis: ")) - 1
+    y_var_index = int(input("Select column number for y-axis: ")) - 1
+    x_var, y_var = data.columns[x_var_index], data.columns[y_var_index]
+    print(f"\nSelected: x-axis = '{x_var}', y-axis = '{y_var}'")
+except (ValueError, IndexError):
+    print("Invalid selection. Please enter valid column numbers.")
+    exit()
+
+x_data, y_data = data[x_var], data[y_var]
+print("\nSample Data:\n", data[[x_var, y_var]].head())
+
+# Run plot function
+plot_best_fit(x_data, y_data, x_var, y_var, f"Scatterplot of {x_var} vs. {y_var} with Best Fit Line")
